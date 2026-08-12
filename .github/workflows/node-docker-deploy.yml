@@ -1,0 +1,79 @@
+name: Node.js build and deployment
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-deploy:
+    runs-on: [self-hosted, node]
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20
+      - name: Install dependencies
+        env:
+          NODE_ENV: development
+        run: |
+          node -v
+          npm -v
+          npm install
+      - name: Test
+        env:
+          NODE_ENV: test
+        run: |
+          echo "Environment will be: ${NODE_ENV}"
+          npm test
+      # actions/upload-artifact@v4
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: test-results
+          path: test-results.xml
+          if-no-files-found: warn
+      - name: Build
+        env:
+          NODE_ENV: production
+        run: npm run build
+      - name: Archive build output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dist
+          path: dist/**
+          if-no-files-found: error
+      - name: Build Docker image
+        run: |
+          docker build -t "myapp:${{ github.run_number }}" .
+          docker tag "myapp:${{ github.run_number }}" myapp:latest
+      - name: Log in to Docker registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: printf '%s' "$REGISTRY_PASSWORD" | docker login --username "$REGISTRY_USERNAME" --password-stdin
+      - name: Push Docker images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: |
+          docker push "myapp:${{ github.run_number }}"
+          docker push myapp:latest
+      - name: Deploy to Kubernetes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          kubeconfig="$RUNNER_TEMP/kubeconfig"
+          trap 'rm -f "$kubeconfig"' EXIT
+          printf '%s' "$KUBECONFIG_B64" | base64 --decode > "$kubeconfig"
+          chmod 600 "$kubeconfig"
+          KUBECONFIG="$kubeconfig" kubectl set image deployment/myapp "myapp=myapp:${{ github.run_number }}"
+      - name: Cleanup
+        run: |
+          npm prune --production
+          docker system prune -f
