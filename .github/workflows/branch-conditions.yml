@@ -1,0 +1,24 @@
+name: Branch conditions
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  branch-conditions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: One
+        run: echo "Hello"
+      - name: Evaluate master
+        if: github.ref == 'refs/heads/master'
+        run: |
+          echo "World"
+          echo "Heal it"
+      - name: Branch test
+        if: github.ref != 'refs/heads/master'
+        run: echo "Not master branch"
